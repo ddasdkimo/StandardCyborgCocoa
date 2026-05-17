@@ -13,6 +13,7 @@
 		7642B80321E679E900BC45C7 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 7642B80221E679E900BC45C7 /* Assets.xcassets */; };
 		7642B80621E679E900BC45C7 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 7642B80421E679E900BC45C7 /* LaunchScreen.storyboard */; };
 		7663140F2CECFCDE00CC7AF3 /* StandardCyborgUI in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 766314062CEB186300CC7AF3 /* StandardCyborgUI */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
+		76C3BB752F8D89AA00C75979 /* StandardCyborgFusion in Embed Frameworks */ = {isa = PBXBuildFile; productRef = 76C3BB6C2F8D847C00C75979 /* StandardCyborgFusion */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		76C3BB6D2F8D847C00C75979 /* StandardCyborgFusion in Frameworks */ = {isa = PBXBuildFile; productRef = 76C3BB6C2F8D847C00C75979 /* StandardCyborgFusion */; };
 		76C3BB712F8D885C00C75979 /* StandardCyborgUI in Frameworks */ = {isa = PBXBuildFile; productRef = 76C3BB702F8D885C00C75979 /* StandardCyborgUI */; };
 		76C3BB742F8D88F900C75979 /* StandardCyborgFusion in Frameworks */ = {isa = PBXBuildFile; productRef = 76C3BB732F8D88F900C75979 /* StandardCyborgFusion */; };
@@ -26,6 +27,7 @@
 			dstSubfolderSpec = 10;
 			files = (
 				7663140F2CECFCDE00CC7AF3 /* StandardCyborgUI in Embed Frameworks */,
+				76C3BB752F8D89AA00C75979 /* StandardCyborgFusion in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -236,7 +238,7 @@
 				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = FZU7U4ED2K;
+				DEVELOPMENT_TEAM = EABG9ULJ39;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -301,7 +303,7 @@
 				COPY_PHASE_STRIP = NO;
 				DEAD_CODE_STRIPPING = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = FZU7U4ED2K;
+				DEVELOPMENT_TEAM = EABG9ULJ39;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -338,7 +340,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.StandardCyborg.StandardCyborgExample;
+				PRODUCT_BUNDLE_IDENTIFIER = com.yehchuanheng.StandardCyborgExample;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
@@ -364,7 +366,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.StandardCyborg.StandardCyborgExample;
+				PRODUCT_BUNDLE_IDENTIFIER = com.yehchuanheng.StandardCyborgExample;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SUPPORTED_PLATFORMS = "iphonesimulator iphoneos";
