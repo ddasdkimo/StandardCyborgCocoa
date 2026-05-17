@@ -159,6 +159,12 @@ import UIKit
         didSet { _reconstructionManager.includesColorBuffersInMetadata = generatesTexturedMeshes }
     }
     @objc public var texturedMeshColorBufferSaveInterval: Int = 8
+
+    /// When true (default), scanning stops automatically as soon as the reconstruction
+    /// pipeline reports `.failed` for a frame. Set to false to keep scanning until the
+    /// user explicitly taps the shutter — useful for sweeping around an object where
+    /// transient frame failures are expected (e.g. circling a foot).
+    @objc public var automaticallyStopsOnFailure: Bool = true
     @objc public lazy var meshTexturing = SCMeshTexturing()
     
     // MARK: - UIViewController
@@ -308,10 +314,11 @@ import UIKit
             _assimilatedFrameIndex += 1
             
         case .failed:
-            let assimilatedTooFewFrames = statistics.succeededCount < _failedScanShowPreviewMinFrameCount
-            
-            stopScanning(reason: assimilatedTooFewFrames ? .canceled : .finished)
-            
+            if automaticallyStopsOnFailure {
+                let assimilatedTooFewFrames = statistics.succeededCount < _failedScanShowPreviewMinFrameCount
+                stopScanning(reason: assimilatedTooFewFrames ? .canceled : .finished)
+            }
+
         case .lostTracking:
             break
         @unknown default:

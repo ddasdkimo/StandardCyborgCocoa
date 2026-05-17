@@ -14,9 +14,13 @@ private func _roundUpToMultiple(value: Int, multiple: Int) -> Int {
     return ((value + multiple - 1) / multiple) * multiple
 }
 
+// IMPORTANT: This must match the order/layout of `Uniforms` in PointCloudCommandEncoder.metal
+// (normalMatrix, modelView, modelViewProjection, pointSize). The previous order put
+// modelViewMatrix first, which caused the shader to read the wrong matrices and was the reason
+// changing the extrinsic appeared to have no effect.
 private struct SharedUniforms {
-    let modelViewMatrix: simd_float4x4
     let normalMatrix: simd_float3x3
+    let modelViewMatrix: simd_float4x4
     let modelViewProjection: simd_float4x4
     let pointSize: Float
     let __memoryPadding: simd_float2
@@ -102,7 +106,7 @@ public class PointCloudCommandEncoder {
                                outputTexture: MTLTexture)
     {
         guard pointCloud.pointCount > 0 else { return }
-        
+
         if _depthTexture == nil {
             let descriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: MTLPixelFormat.depth32Float,
                                                                       width: outputTexture.width,
@@ -216,19 +220,32 @@ public class PointCloudCommandEncoder {
             simd_float4([ 0,  0, (far + near) / (near - far), -1]),
             simd_float4([ 0,  0, 2 * far * near / (near - far), 0])
         ])
-        
+
         let viewInverse = viewMatrix.inverse
-        
-        // Construct an intrinsic matrix which flips the image vertically on the screen, swaps
-        // the horizontal and vertical axes, and also performs a self-flip.
-        var extrinsic = simd_float4x4([
-            simd_float4([  1,  0,  0,  0 ]),
-            simd_float4([  0,  1,  0,  0 ]),
-            simd_float4([  0,  0,  -1,  0 ]),
-            simd_float4([  0,  0,  0,  1 ]),
+
+        // After AspectFillTextureCommandEncoder rotates the camera background 90° internally,
+        // the live point cloud comes out 90° clockwise relative to it. Rotate view-space 90°
+        // CCW around Z to compensate. NOTE: empirically this is required on iPhone 16 Pro Max
+        // running iOS 26 even though the sensor is physically 4:3 — the calibration reference
+        // dimensions branching used in PerspectiveCamera+AVFoundation.mm does not produce a
+        // matching screen-axis layout on this configuration. If iPhone 17 Pro+ users see
+        // sideways previews, gate this rotation behind a sensor-aspect check.
+        let rot = simd_float4x4([
+            simd_float4([ 0, 1, 0, 0 ]),
+            simd_float4([-1, 0, 0, 0 ]),
+            simd_float4([ 0, 0, 1, 0 ]),
+            simd_float4([ 0, 0, 0, 1 ]),
         ])
+        let zFlip = simd_float4x4([
+            simd_float4([1, 0,  0, 0]),
+            simd_float4([0, 1,  0, 0]),
+            simd_float4([0, 0, -1, 0]),
+            simd_float4([0, 0,  0, 1]),
+        ])
+        var extrinsic = matrix_multiply(zFlip, rot)
         if flipsInputHorizontally {
-            extrinsic.columns.1.x = -1
+            extrinsic.columns.0.x = -extrinsic.columns.0.x
+            extrinsic.columns.0.y = -extrinsic.columns.0.y
         }
         
         let modelView = matrix_multiply(extrinsic, viewInverse)
@@ -243,8 +260,8 @@ public class PointCloudCommandEncoder {
         
         let modelViewProjection = matrix_multiply(projection, matrix_multiply(extrinsic, viewInverse))
         
-        var sharedUniforms = SharedUniforms(modelViewMatrix: modelView,
-                                            normalMatrix: normalMatrix,
+        var sharedUniforms = SharedUniforms(normalMatrix: normalMatrix,
+                                            modelViewMatrix: modelView,
                                             modelViewProjection: modelViewProjection,
                                             pointSize: pointSize,
                                             __memoryPadding: simd_float2(repeating: 0))
