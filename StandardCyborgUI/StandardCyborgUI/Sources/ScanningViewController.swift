@@ -81,6 +81,13 @@ import UIKit
     @objc public func startScanning() {
         ScanningHapticFeedbackEngine.shared.scanningBegan()
 
+        // Multi-pass: reset reconstruction from the previous pass at the START of the
+        // new pass. This way, when the user taps "結束" between passes, the manager
+        // still holds the latest pass's data and `finalize` has something to build.
+        if multiPassMode && !capturedSessionURLs.isEmpty {
+            _reconstructionManager.reset()
+        }
+
         _state = .scanning
         _assimilatedFrameIndex = 0
         meshTexturing.reset()
@@ -138,12 +145,10 @@ import UIKit
             }
 
             if multiPassMode {
-                // Keep camera + reconstruction manager alive; just reset reconstruction
-                // so the next pass fuses cleanly without bleeding the previous pass's
-                // accumulated voxels. The SDK mesh per-pass is not used in the P-flow
-                // pipeline anyway — only the RGBD dumps matter — so resetting is safe.
-                _reconstructionManager.reset()
-                meshTexturing.reset()
+                // Keep camera + reconstruction manager populated so the eventual
+                // "結束" tap has data to finalize. Reset happens at the START of the
+                // next pass, not here, otherwise finishMultiPassScanning would call
+                // finalize on an empty manager and crash.
                 _updateUI()
                 return
             }
