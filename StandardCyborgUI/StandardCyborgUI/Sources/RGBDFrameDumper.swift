@@ -3,8 +3,11 @@ import CoreImage
 import CoreVideo
 import Foundation
 import ImageIO
+import os
 import UniformTypeIdentifiers
 import UIKit
+
+private let dumpLog = Logger(subsystem: "io.myfactory.rgbd", category: "dumper")
 
 /// Dumps RGB + depth frames to a per-session folder under Documents/captures/.
 /// Layout matches Open3D's Reconstruction System input:
@@ -20,14 +23,22 @@ import UIKit
 
     @objc public private(set) var sessionURL: URL
     @objc public private(set) var frameCount: Int = 0
+    @objc public private(set) var writtenCount: Int = 0
+    /// True while there are queued frame writes still pending.
+    @objc public var isFlushing: Bool { frameCount > writtenCount }
+
+    /// Optional: write only every Nth submitted frame (1 = all, 2 = half, 3 = third...).
+    /// Lower disk pressure during long scans. Loop closure tolerates the lower rate.
+    @objc public var keepEveryNthFrame: Int = 2
 
     private let colorDir: URL
     private let depthDir: URL
     private let ciContext = CIContext(options: [.useSoftwareRenderer: false])
-    private let serialQueue = DispatchQueue(label: "io.myfactory.rgbd-dumper", qos: .userInitiated)
+    private let serialQueue = DispatchQueue(label: "io.myfactory.rgbd-dumper", qos: .utility)
     private var intrinsicsWritten = false
     private var manifest: [String: Any] = [:]
     private let startedAt = Date()
+    private var submittedCount = 0
 
     @objc public init(rootDirectory: URL) throws {
         let sessionId = RGBDFrameDumper.iso8601(Date())
@@ -53,6 +64,11 @@ import UIKit
     @objc public func dump(colorBuffer: CVPixelBuffer,
                            depthBuffer: CVPixelBuffer,
                            calibration: AVCameraCalibrationData) {
+        // Down-sample submitted frames if keepEveryNthFrame > 1
+        submittedCount += 1
+        if keepEveryNthFrame > 1 && (submittedCount % keepEveryNthFrame) != 0 {
+            return
+        }
         let idx = frameCount
         frameCount += 1
         serialQueue.async {
@@ -64,19 +80,32 @@ import UIKit
                                      depthWidth: CVPixelBufferGetWidth(depthBuffer),
                                      depthHeight: CVPixelBufferGetHeight(depthBuffer))
             }
+            self.writtenCount += 1
+            if self.writtenCount % 50 == 0 {
+                dumpLog.info("dumped \(self.writtenCount) / submitted \(self.submittedCount)")
+            }
         }
     }
 
-    /// Finalize: write manifest, return zipped URL on completion.
+    /// Finalize: write manifest, return zipped URL on completion. Calls back on the
+    /// caller's choice of queue (default: serialQueue). Any pending writes already
+    /// enqueued will complete first because the serial queue is FIFO.
     @objc public func finalize(_ completion: @escaping (URL?, Error?) -> Void) {
+        let submitted = submittedCount
+        let counted = frameCount
+        dumpLog.info("finalize requested (submitted=\(submitted) kept=\(counted))")
         serialQueue.async {
             self.manifest["ended_at"] = ISO8601DateFormatter().string(from: Date())
             self.manifest["frame_count"] = self.frameCount
+            self.manifest["submitted_count"] = self.submittedCount
+            self.manifest["keep_every_nth"] = self.keepEveryNthFrame
             do {
                 let data = try JSONSerialization.data(withJSONObject: self.manifest, options: [.prettyPrinted])
                 try data.write(to: self.sessionURL.appendingPathComponent("manifest.json"))
+                dumpLog.info("finalize wrote manifest, \(self.frameCount) frames at \(self.sessionURL.path)")
                 completion(self.sessionURL, nil)
             } catch {
+                dumpLog.error("finalize manifest write failed: \(error.localizedDescription)")
                 completion(nil, error)
             }
         }

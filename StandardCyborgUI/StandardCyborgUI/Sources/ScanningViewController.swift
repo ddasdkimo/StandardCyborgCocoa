@@ -208,6 +208,10 @@ import UIKit
     /// Populated after a `dumpsRawFrames = true` scan finishes. URL of the session folder.
     @objc public private(set) var lastFrameDumpURL: URL?
 
+    /// Diagnostic helpers exposed for the host app to read while debugging.
+    @objc public var dumpedFrameCount: Int { _frameDumper?.frameCount ?? 0 }
+    @objc public var dumperIsFlushing: Bool { _frameDumper?.isFlushing ?? false }
+
     @objc public lazy var meshTexturing = SCMeshTexturing()
     
     // MARK: - UIViewController

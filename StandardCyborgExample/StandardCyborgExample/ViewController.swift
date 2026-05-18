@@ -8,6 +8,9 @@
 import StandardCyborgUI
 import StandardCyborgFusion
 import UIKit
+import os
+
+private let appLog = Logger(subsystem: "io.myfactory.scexample", category: "viewcontroller")
 
 class ViewController: UIViewController {
     @IBOutlet private weak var showScanButton: UIButton!
@@ -125,8 +128,10 @@ class ViewController: UIViewController {
 
     @objc private func savePreviewedSceneTapped() {
         guard let previewVC = scenePreviewVC else { return }
+        appLog.info("savePreviewedSceneTapped: mesh=\(previewVC.scScene.mesh != nil) dumpURL=\(self.lastRGBDDumpURL?.lastPathComponent ?? "nil")")
         // F3 二次檢查: mesh 還沒生成不應該 save (按鈕本應 disabled,但保險起見)
         guard previewVC.scScene.mesh != nil else {
+            appLog.error("Save tapped but mesh is nil — guarding")
             let alert = UIAlertController(title: "Mesh 還沒處理完",
                                           message: "請等到右側按鈕變綠 (✅ Save) 再儲存。",
                                           preferredStyle: .alert)
@@ -134,6 +139,13 @@ class ViewController: UIViewController {
             previewVC.present(alert, animated: true)
             return
         }
+        // Log free disk + memory at the moment of Save so we can correlate crashes.
+        if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: NSHomeDirectory()),
+           let free = attrs[.systemFreeSize] as? NSNumber {
+            appLog.info("free disk before save: \(free.int64Value / (1024 * 1024)) MB")
+        }
+        let memMB = ProcessInfo.processInfo.physicalMemory / (1024 * 1024)
+        appLog.info("device physical memory: \(memMB) MB")
         saveScene(scene: previewVC.scScene, thumbnail: previewVC.renderedSceneImage)
         dismiss(animated: true)
     }
@@ -195,18 +207,27 @@ class ViewController: UIViewController {
     }
     
     private func saveScene(scene: SCScene, thumbnail: UIImage?) {
+        appLog.info("saveScene start: gltf=\(self.sceneGltfURL.lastPathComponent)")
         scene.writeToGLTF(atPath: sceneGltfURL.path)
+        appLog.info("saveScene wrote GLTF (\((try? FileManager.default.attributesOfItem(atPath: self.sceneGltfURL.path)[.size]) as? Int ?? 0) bytes)")
 
         // Pre-write export-friendly formats while we still hold the live SCMesh — once the
         // user re-enters preview from the thumbnail, scScene is rebuilt from GLTF and its
         // .mesh property becomes nil (SDK limitation), so we can't generate USDZ/PLY then.
         if let mesh = scene.mesh {
-            mesh.writeToUSDZ(atPath: sceneUsdzURL.path)
-            mesh.writeToPLY(atPath: scenePlyURL.path)
+            appLog.info("saveScene write USDZ start")
+            let usdzOk = mesh.writeToUSDZ(atPath: sceneUsdzURL.path)
+            appLog.info("saveScene write USDZ done (ok=\(usdzOk))")
+            appLog.info("saveScene write PLY start")
+            let plyOk = mesh.writeToPLY(atPath: scenePlyURL.path)
+            appLog.info("saveScene write PLY done (ok=\(plyOk))")
+        } else {
+            appLog.error("saveScene: scene.mesh is nil — skipped USDZ/PLY")
         }
 
         if let thumbnail = thumbnail, let pngData = thumbnail.pngData() {
             try? pngData.write(to: sceneThumbnailURL)
+            appLog.info("saveScene wrote thumbnail")
         }
 
         lastScene = scene
@@ -214,6 +235,7 @@ class ViewController: UIViewController {
         lastSceneDate = Date()
 
         updateUI()
+        appLog.info("saveScene done")
     }
 
     private func deleteScene() {
@@ -255,6 +277,7 @@ extension ViewController: ScanningViewControllerDelegate {
     func scanningViewController(_ controller: ScanningViewController, didScan pointCloud: SCPointCloud) {
         // Snapshot the RGBD dump folder for the next export (B-flow: feed Open3D offline)
         lastRGBDDumpURL = controller.lastFrameDumpURL
+        appLog.info("didScan: dumpedFrames=\(controller.dumpedFrameCount) flushing=\(controller.dumperIsFlushing) url=\(controller.lastFrameDumpURL?.lastPathComponent ?? "nil")")
 
         let vc = ScenePreviewViewController(pointCloud: pointCloud, meshTexturing: controller.meshTexturing, landmarks: nil)
         vc.leftButton.addTarget(self, action: #selector(dismissPreviewedScanTapped), for: UIControl.Event.touchUpInside)
