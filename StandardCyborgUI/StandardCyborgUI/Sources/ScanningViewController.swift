@@ -80,10 +80,28 @@ import UIKit
     /** Starts scanning immediately */
     @objc public func startScanning() {
         ScanningHapticFeedbackEngine.shared.scanningBegan()
-        
+
         _state = .scanning
         _assimilatedFrameIndex = 0
         meshTexturing.reset()
+
+        if dumpsRawFrames {
+            do {
+                let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+                let dumper = try RGBDFrameDumper(rootDirectory: docs)
+                _frameDumper = dumper
+                // Expose session path immediately so the export UI can pick it up even before
+                // finalize completes.
+                lastFrameDumpURL = dumper.sessionURL
+            } catch {
+                print("[FrameDumper] failed to start: \(error)")
+                _frameDumper = nil
+                lastFrameDumpURL = nil
+            }
+        } else {
+            _frameDumper = nil
+            lastFrameDumpURL = nil
+        }
     }
     
     /** Stops scanning immediately */
@@ -101,23 +119,39 @@ import UIKit
         
         if reason == .finished {
             _cameraManager.stopSession()
-            
+
             meshTexturing.cameraCalibrationData = _reconstructionManager.latestCameraCalibrationData
             meshTexturing.cameraCalibrationFrameWidth = _reconstructionManager.latestCameraCalibrationFrameWidth
             meshTexturing.cameraCalibrationFrameHeight = _reconstructionManager.latestCameraCalibrationFrameHeight
-            
+
+            // Flush raw frame dump alongside fusion finalize
+            if let dumper = _frameDumper {
+                dumper.finalize { [weak self] url, error in
+                    DispatchQueue.main.async {
+                        self?.lastFrameDumpURL = url
+                        if let err = error {
+                            print("[FrameDumper] finalize error: \(err)")
+                        } else if let url = url {
+                            print("[FrameDumper] wrote session: \(url.path) (\(dumper.frameCount) frames)")
+                        }
+                    }
+                }
+                _frameDumper = nil
+            }
+
             // Do final cleanup on the scan
             _reconstructionManager.finalize {
                 let pointCloud = self._reconstructionManager.buildPointCloud()
-                
+
                 // Reset it now to keep peak memory usage down
                 self._reconstructionManager.reset()
-                
+
                 self.delegate?.scanningViewController?(self, didScan: pointCloud)
             }
         } else {
             _reconstructionManager.reset()
             meshTexturing.reset()
+            _frameDumper = nil
         }
     }
     
@@ -165,6 +199,15 @@ import UIKit
     /// user explicitly taps the shutter — useful for sweeping around an object where
     /// transient frame failures are expected (e.g. circling a foot).
     @objc public var automaticallyStopsOnFailure: Bool = true
+
+    /// If true, every accumulated frame is also written to disk as RGB+depth (uint16 mm PNG)
+    /// alongside the live fusion pipeline. After scanning stops, `lastFrameDumpURL` points to
+    /// the session folder for export. Used by MyFactory's offline Open3D reconstruction path.
+    @objc public var dumpsRawFrames: Bool = false
+
+    /// Populated after a `dumpsRawFrames = true` scan finishes. URL of the session folder.
+    @objc public private(set) var lastFrameDumpURL: URL?
+
     @objc public lazy var meshTexturing = SCMeshTexturing()
     
     // MARK: - UIViewController
@@ -263,9 +306,9 @@ import UIKit
         DispatchQueue.main.sync {
             isScanning = self._state == _State.scanning
         }
-        
+
         let pointCloud: SCPointCloud
-        
+
         if isScanning {
             pointCloud = _reconstructionManager.buildPointCloud()
         } else {
@@ -278,17 +321,22 @@ import UIKit
                                                                              with: depthCalibrationData,
                                                                              smoothingPoints: true)
         }
-        
+
         scanningViewRenderer.draw(colorBuffer: colorBuffer,
                                   pointCloud: pointCloud,
                                   depthCameraCalibrationData: depthCalibrationData,
                                   viewMatrix: _latestViewMatrix,
                                   into: _metalLayer)
-        
+
         if isScanning {
             _reconstructionManager.accumulate(depthBuffer: depthBuffer,
                                               colorBuffer: colorBuffer,
                                               calibrationData: depthCalibrationData)
+
+            // Mirror frames to disk for offline Open3D reconstruction (MyFactory B-flow)
+            _frameDumper?.dump(colorBuffer: colorBuffer,
+                               depthBuffer: depthBuffer,
+                               calibration: depthCalibrationData)
         }
     }
     
@@ -340,6 +388,7 @@ import UIKit
     private let _cameraManager = CameraManager()
     private var _latestViewMatrix = matrix_identity_float4x4
     private var _assimilatedFrameIndex = 0
+    private var _frameDumper: RGBDFrameDumper?
     
     private let _metalContainerView = UIView()
     private let _metalLayer = CAMetalLayer()

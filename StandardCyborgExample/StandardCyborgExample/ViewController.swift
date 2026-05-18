@@ -15,6 +15,7 @@ class ViewController: UIViewController {
     private var lastScene: SCScene?
     private var lastSceneDate: Date?
     private var lastSceneThumbnail: UIImage?
+    private var lastRGBDDumpURL: URL?
     private var scenePreviewVC: ScenePreviewViewController?
     
     private lazy var documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
@@ -70,6 +71,7 @@ class ViewController: UIViewController {
         scanningVC.delegate = self
         scanningVC.generatesTexturedMeshes = true
         scanningVC.automaticallyStopsOnFailure = false
+        scanningVC.dumpsRawFrames = true   // MyFactory B-flow: keep raw RGBD for offline Open3D
         scanningVC.modalPresentationStyle = .fullScreen
         present(scanningVC, animated: true)
     }
@@ -154,6 +156,11 @@ class ViewController: UIViewController {
 
         if items.isEmpty, fm.fileExists(atPath: sceneGltfURL.path) {
             items.append(sceneGltfURL)
+        }
+
+        // Also include the raw RGBD dump folder so Open3D can reconstruct offline (B-flow)
+        if let dumpURL = lastRGBDDumpURL, fm.fileExists(atPath: dumpURL.path) {
+            items.append(dumpURL)
         }
 
         guard !items.isEmpty else {
@@ -246,6 +253,9 @@ extension ViewController: ScanningViewControllerDelegate {
     }
     
     func scanningViewController(_ controller: ScanningViewController, didScan pointCloud: SCPointCloud) {
+        // Snapshot the RGBD dump folder for the next export (B-flow: feed Open3D offline)
+        lastRGBDDumpURL = controller.lastFrameDumpURL
+
         let vc = ScenePreviewViewController(pointCloud: pointCloud, meshTexturing: controller.meshTexturing, landmarks: nil)
         vc.leftButton.addTarget(self, action: #selector(dismissPreviewedScanTapped), for: UIControl.Event.touchUpInside)
         vc.rightButton.addTarget(self, action: #selector(savePreviewedSceneTapped), for: UIControl.Event.touchUpInside)
