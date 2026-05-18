@@ -215,6 +215,8 @@ class ViewController: UIViewController {
         // user re-enters preview from the thumbnail, scScene is rebuilt from GLTF and its
         // .mesh property becomes nil (SDK limitation), so we can't generate USDZ/PLY then.
         if let mesh = scene.mesh {
+            // USDZ is best-effort: SDK now returns NO when texture is missing instead
+            // of throwing. PLY is the must-have geometry-only fallback for our pipeline.
             appLog.info("saveScene write USDZ start")
             let usdzOk = mesh.writeToUSDZ(atPath: sceneUsdzURL.path)
             appLog.info("saveScene write USDZ done (ok=\(usdzOk))")

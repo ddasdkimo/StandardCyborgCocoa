@@ -481,6 +481,14 @@ using namespace standard_cyborg;
 
 - (BOOL)writeToUSDCAtPath:(NSString *)USDCPath
 {
+    // Guard: writeToUSDCAtPath unconditionally uses self.textureJPEGPath to build
+    // material URLs. If texturing didn't run (or hasn't finished) the path is nil,
+    // and `[NSURL fileURLWithPath:nil]` throws NSException → SIGABRT. Bail cleanly
+    // instead so the host app can fall back to GLTF/PLY without crashing.
+    if (self.textureJPEGPath == nil) {
+        NSLog(@"SCMesh.writeToUSDCAtPath: textureJPEGPath is nil, skipping USDC export");
+        return NO;
+    }
     MDLVertexAttribute *position = [[MDLVertexAttribute alloc] initWithName:MDLVertexAttributePosition
                                                                      format:MDLVertexFormatFloat4
                                                                      offset:0
