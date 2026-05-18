@@ -118,14 +118,12 @@ import UIKit
         }
         
         if reason == .finished {
-            _cameraManager.stopSession()
-
-            meshTexturing.cameraCalibrationData = _reconstructionManager.latestCameraCalibrationData
-            meshTexturing.cameraCalibrationFrameWidth = _reconstructionManager.latestCameraCalibrationFrameWidth
-            meshTexturing.cameraCalibrationFrameHeight = _reconstructionManager.latestCameraCalibrationFrameHeight
-
-            // Flush raw frame dump alongside fusion finalize
+            // Finalize the RGBD dump for this pass (single or multi). For multi-pass,
+            // we append the session URL to capturedSessionURLs once it lands.
             if let dumper = _frameDumper {
+                if multiPassMode {
+                    capturedSessionURLs.append(dumper.sessionURL)
+                }
                 dumper.finalize { [weak self] url, error in
                     DispatchQueue.main.async {
                         self?.lastFrameDumpURL = url
@@ -139,13 +137,28 @@ import UIKit
                 _frameDumper = nil
             }
 
+            if multiPassMode {
+                // Keep camera + reconstruction manager alive; just reset reconstruction
+                // so the next pass fuses cleanly without bleeding the previous pass's
+                // accumulated voxels. The SDK mesh per-pass is not used in the P-flow
+                // pipeline anyway — only the RGBD dumps matter — so resetting is safe.
+                _reconstructionManager.reset()
+                meshTexturing.reset()
+                _updateUI()
+                return
+            }
+
+            // Single-pass: finalize SDK mesh and stop the camera as before.
+            _cameraManager.stopSession()
+            meshTexturing.cameraCalibrationData = _reconstructionManager.latestCameraCalibrationData
+            meshTexturing.cameraCalibrationFrameWidth = _reconstructionManager.latestCameraCalibrationFrameWidth
+            meshTexturing.cameraCalibrationFrameHeight = _reconstructionManager.latestCameraCalibrationFrameHeight
+
             // Do final cleanup on the scan
             _reconstructionManager.finalize {
                 let pointCloud = self._reconstructionManager.buildPointCloud()
-
                 // Reset it now to keep peak memory usage down
                 self._reconstructionManager.reset()
-
                 self.delegate?.scanningViewController?(self, didScan: pointCloud)
             }
         } else {
@@ -153,6 +166,29 @@ import UIKit
             meshTexturing.reset()
             _frameDumper = nil
         }
+    }
+
+    /// Multi-pass: when the user has captured enough passes, call this to wrap up.
+    /// Equivalent to a single-pass `stopScanning(.finished)` flow, except the
+    /// delegate also has `capturedSessionURLs` populated with every pass's dump.
+    @objc public func finishMultiPassScanning() {
+        // If a pass is currently in progress, stop it first (its URL gets appended).
+        if _state == .scanning {
+            stopScanning(reason: .finished)
+        }
+        _cameraManager.stopSession()
+        meshTexturing.cameraCalibrationData = _reconstructionManager.latestCameraCalibrationData
+        meshTexturing.cameraCalibrationFrameWidth = _reconstructionManager.latestCameraCalibrationFrameWidth
+        meshTexturing.cameraCalibrationFrameHeight = _reconstructionManager.latestCameraCalibrationFrameHeight
+        _reconstructionManager.finalize {
+            let pointCloud = self._reconstructionManager.buildPointCloud()
+            self._reconstructionManager.reset()
+            self.delegate?.scanningViewController?(self, didScan: pointCloud)
+        }
+    }
+
+    @objc private func _endButtonTapped(_ sender: UIButton) {
+        finishMultiPassScanning()
     }
     
     @objc public var maxDepthResolution: Int = 320 {
@@ -207,6 +243,33 @@ import UIKit
 
     /// Populated after a `dumpsRawFrames = true` scan finishes. URL of the session folder.
     @objc public private(set) var lastFrameDumpURL: URL?
+
+    /// Multi-pass mode for the MyFactory P-flow: every shutter-driven stop just
+    /// finalizes the current RGBD dump and stays in default state, ready for
+    /// the user to start another pass. Pressing `endButton` (top-right) calls
+    /// the delegate with the last pass's mesh, and passes all session URLs via
+    /// `capturedSessionURLs`. Off by default to keep the original single-pass UX.
+    @objc public var multiPassMode: Bool = false {
+        didSet { _updateUI() }
+    }
+
+    /// In multiPassMode, accumulated RGBD dump folders across all completed
+    /// passes within this scanner presentation. Read this in the
+    /// scanningViewController(_:didScan:) delegate callback.
+    @objc public private(set) var capturedSessionURLs: [URL] = []
+
+    /// Top-right "結束 / Finish" button shown only in multiPassMode.
+    /// Customize text/style by tweaking these in the host app.
+    @objc public let endButton: UIButton = {
+        let b = UIButton(type: .system)
+        b.setTitle("結束", for: .normal)
+        b.titleLabel?.font = UIFont.systemFont(ofSize: 16, weight: .semibold)
+        b.setTitleColor(.white, for: .normal)
+        b.backgroundColor = UIColor(red: 0, green: 0.48, blue: 1, alpha: 0.85)
+        b.layer.cornerRadius = 16
+        b.contentEdgeInsets = UIEdgeInsets(top: 6, left: 18, bottom: 6, right: 18)
+        return b
+    }()
 
     /// Diagnostic helpers exposed for the host app to read while debugging.
     @objc public var dumpedFrameCount: Int { _frameDumper?.frameCount ?? 0 }
@@ -277,6 +340,10 @@ import UIKit
         shutterButton.sizeToFit()
         shutterButton.center = CGPoint(x: view.bounds.midX,
                                        y: view.bounds.maxY - 5 - 0.5 * shutterButton.frame.size.height - view.safeAreaInsets.bottom)
+
+        endButton.sizeToFit()
+        endButton.center = CGPoint(x: view.bounds.maxX - 0.5 * endButton.frame.width - 20,
+                                   y: 0.5 * endButton.frame.height + view.safeAreaInsets.top + 4)
     }
     
     override open func didReceiveMemoryWarning() {
@@ -436,6 +503,8 @@ import UIKit
         view.addSubview(_mirrorModeBackground)
         view.addSubview(dismissButton)
         view.addSubview(shutterButton)
+        view.addSubview(endButton)
+        endButton.addTarget(self, action: #selector(_endButtonTapped(_:)), for: .touchUpInside)
         _mirrorModeBackground.addSubview(_mirrorModeLabel)
         _mirrorModeBackground.addSubview(_mirrorModeButton)
         
@@ -492,6 +561,14 @@ import UIKit
         _mirrorModeLabel.isHidden = !mirrorModeEnabled
         scanningViewRenderer.flipsInputHorizontally = mirrorModeEnabled
         _reconstructionManager.flipsInputHorizontally = mirrorModeEnabled
+
+        // End button shows only in multi-pass mode, between passes (not while
+        // a pass is actively scanning — to prevent accidental taps mid-scan).
+        let endVisible = multiPassMode && _state != .scanning && !capturedSessionURLs.isEmpty
+        endButton.isHidden = !endVisible
+        if endVisible {
+            endButton.setTitle("結束 (\(capturedSessionURLs.count) 段)", for: .normal)
+        }
     }
     
     private func _startCameraSession() {

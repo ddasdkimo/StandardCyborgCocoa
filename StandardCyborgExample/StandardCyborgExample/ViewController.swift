@@ -19,6 +19,7 @@ class ViewController: UIViewController {
     private var lastSceneDate: Date?
     private var lastSceneThumbnail: UIImage?
     private var lastRGBDDumpURL: URL?
+    private var lastRGBDSessionURLs: [URL] = []
     private var scenePreviewVC: ScenePreviewViewController?
     
     private lazy var documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
@@ -50,7 +51,7 @@ class ViewController: UIViewController {
     
     // MARK: - User Interaction
     
-    private static let footScanOnboardingShownKey = "FootScanOnboardingShown_v1"
+    private static let footScanOnboardingShownKey = "FootScanOnboardingShown_v2_multipass"
 
     @IBAction private func startScanning(_ sender: UIButton) {
         #if targetEnvironment(simulator)
@@ -75,23 +76,25 @@ class ViewController: UIViewController {
         scanningVC.generatesTexturedMeshes = true
         scanningVC.automaticallyStopsOnFailure = false
         scanningVC.dumpsRawFrames = true   // MyFactory B-flow: keep raw RGBD for offline Open3D
+        scanningVC.multiPassMode = true    // MyFactory P-flow: shutter taps short passes, end button wraps up
         scanningVC.modalPresentationStyle = .fullScreen
         present(scanningVC, animated: true)
     }
 
     private func presentFootScanOnboarding(completion: @escaping () -> Void) {
         let alert = UIAlertController(
-            title: "全腳掃描提示",
+            title: "多段掃描提示",
             message: """
 
-            建議掃描範圍 (繞 360°):
-            • 從腳趾掃到腳跟
-            • 兩側 + 腳背都要包到
-            • 抬腳離地拍腳底
-            • 慢速移動,保持腳一直在畫面中
+            建議方式 (避免 drift,單段別超過 10 秒):
+            • 第 1 段:腳底 / 掌面
+            • 第 2 段:翻過來掃背面 / 腳背
+            • 第 3 段:側面
+            • 視需要再多掃幾段
 
-            按底部快門開始,再按一次結束。
-            Mesh 處理完才能 Save。
+            每段:快門→掃→快門停。
+            掃完所有段後,按右上「結束」進預覽 → Save。
+            離線會把所有段拼成完整 3D。
             """,
             preferredStyle: .alert
         )
@@ -170,8 +173,13 @@ class ViewController: UIViewController {
             items.append(sceneGltfURL)
         }
 
-        // Also include the raw RGBD dump folder so Open3D can reconstruct offline (B-flow)
-        if let dumpURL = lastRGBDDumpURL, fm.fileExists(atPath: dumpURL.path) {
+        // Also include the raw RGBD dump folders so Open3D can reconstruct offline.
+        // P-flow: multiPassMode returns N session URLs; B-flow single-pass returns one.
+        if !lastRGBDSessionURLs.isEmpty {
+            for sessionURL in lastRGBDSessionURLs where fm.fileExists(atPath: sessionURL.path) {
+                items.append(sessionURL)
+            }
+        } else if let dumpURL = lastRGBDDumpURL, fm.fileExists(atPath: dumpURL.path) {
             items.append(dumpURL)
         }
 
@@ -277,9 +285,10 @@ extension ViewController: ScanningViewControllerDelegate {
     }
     
     func scanningViewController(_ controller: ScanningViewController, didScan pointCloud: SCPointCloud) {
-        // Snapshot the RGBD dump folder for the next export (B-flow: feed Open3D offline)
+        // Snapshot the RGBD dump folders for the next export (B/P-flow: feed Open3D offline)
         lastRGBDDumpURL = controller.lastFrameDumpURL
-        appLog.info("didScan: dumpedFrames=\(controller.dumpedFrameCount) flushing=\(controller.dumperIsFlushing) url=\(controller.lastFrameDumpURL?.lastPathComponent ?? "nil")")
+        lastRGBDSessionURLs = controller.capturedSessionURLs
+        appLog.info("didScan: multiPass=\(controller.multiPassMode) passes=\(controller.capturedSessionURLs.count) lastDumpedFrames=\(controller.dumpedFrameCount)")
 
         let vc = ScenePreviewViewController(pointCloud: pointCloud, meshTexturing: controller.meshTexturing, landmarks: nil)
         vc.leftButton.addTarget(self, action: #selector(dismissPreviewedScanTapped), for: UIControl.Event.touchUpInside)
